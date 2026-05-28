@@ -2,6 +2,9 @@ import { HUMAN_REPLY_SYNC_LIMIT } from "./constants";
 import { log } from "./log";
 import { type FacebookInboxMessage } from "@/types/faq";
 
+const recentBotSends = new Map<string, { text: string; at: number }>();
+const RECENT_BOT_SEND_TTL_MS = 2 * 60 * 1000;
+
 export interface HumanReplyPair {
   conversationId: string;
   memoryUserId: string;
@@ -40,6 +43,34 @@ function getFacebookConfig() {
   return { pageAccessToken, pageId };
 }
 
+function pruneRecentBotSends(now = Date.now()): void {
+  Array.from(recentBotSends.entries()).forEach(([userId, record]) => {
+    if (now - record.at > RECENT_BOT_SEND_TTL_MS) {
+      recentBotSends.delete(userId);
+    }
+  });
+}
+
+export function rememberFacebookBotSend(userId: string, text: string): void {
+  pruneRecentBotSends();
+  recentBotSends.set(userId, { text, at: Date.now() });
+}
+
+export function isRecentFacebookBotEcho(userId: string, text = ""): boolean {
+  pruneRecentBotSends();
+  const record = recentBotSends.get(userId);
+  if (!record) {
+    return false;
+  }
+
+  const matched = !text || record.text.trim() === text.trim();
+  if (matched) {
+    recentBotSends.delete(userId);
+  }
+
+  return matched;
+}
+
 export async function sendFacebookMessage(
   userId: string,
   text: string,
@@ -56,6 +87,7 @@ export async function sendFacebookMessage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        messaging_type: "RESPONSE",
         recipient: { id: userId },
         message: { text },
       }),
@@ -66,6 +98,12 @@ export async function sendFacebookMessage(
     const body = await res.text();
     throw new Error(`Facebook send failed: ${res.status} ${body.slice(0, 200)}`);
   }
+
+  rememberFacebookBotSend(userId, text);
+  log.info("facebook.message_sent", {
+    userId,
+    textLength: text.length,
+  });
 }
 
 function isPageMessage(message: FacebookMessage, pageId: string): boolean {

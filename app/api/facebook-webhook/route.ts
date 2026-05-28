@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { handleIncomingMessage } from "@/lib/chatbot-core";
 import { markHumanActive } from "@/lib/conversation-memory";
-import { sendFacebookMessage } from "@/lib/facebook";
+import {
+  isRecentFacebookBotEcho,
+  sendFacebookMessage,
+} from "@/lib/facebook";
 import { log } from "@/lib/log";
 import { sanitizeBotReply } from "@/lib/sanitize";
 
@@ -62,6 +65,13 @@ async function handleMessagingEvent(event: FacebookMessagingEvent): Promise<void
 
   if (message.is_echo) {
     const customerUserId = event.recipient?.id;
+    if (customerUserId && isRecentFacebookBotEcho(customerUserId, message.text)) {
+      log.info("facebook.echo_ignored_bot_send", {
+        userId: customerUserId,
+      });
+      return;
+    }
+
     if (customerUserId) {
       markHumanActive(`facebook:${customerUserId}`, "human_replied");
       log.info("facebook.echo_human_active", {
@@ -89,7 +99,22 @@ async function handleMessagingEvent(event: FacebookMessagingEvent): Promise<void
   });
 
   if (result.shouldReply && result.replyText) {
-    await sendFacebookMessage(userId, sanitizeBotReply(result.replyText));
+    const replyText = sanitizeBotReply(result.replyText);
+    try {
+      await sendFacebookMessage(userId, replyText);
+    } catch (error) {
+      log.error("facebook.send_failed", {
+        err: error instanceof Error ? error.message : "unknown",
+        userId,
+        replyLength: replyText.length,
+      });
+    }
+  } else {
+    log.info("facebook.no_reply", {
+      userId,
+      shouldReply: result.shouldReply,
+      hasReplyText: Boolean(result.replyText),
+    });
   }
 }
 
@@ -110,11 +135,19 @@ export async function POST(request: Request) {
 
   try {
     const entries = payload.entry || [];
-    await Promise.all(
-      entries.flatMap((entry) =>
-        (entry.messaging || []).map((event) => handleMessagingEvent(event)),
+    log.info("facebook.webhook_received", {
+      object: payload.object,
+      entries: entries.length,
+      messagingEvents: entries.reduce(
+        (total, entry) => total + (entry.messaging?.length || 0),
+        0,
       ),
-    );
+    });
+    for (const entry of entries) {
+      for (const event of entry.messaging || []) {
+        await handleMessagingEvent(event);
+      }
+    }
   } catch (error) {
     log.error("facebook.webhook_handle_failed", {
       err: error instanceof Error ? error.message : "unknown",
