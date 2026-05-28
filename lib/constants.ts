@@ -1,0 +1,20 @@
+export const DEFAULT_REPLY =
+  "ขออนุญาตเช็กข้อมูลให้ก่อนนะคะ เดี๋ยวน้องแจ้งคุณเอให้ค่ะ 😊";
+
+export const SHEET_ERROR_REPLY =
+  "ตอนนี้น้องดึงข้อมูลไม่สำเร็จ รบกวนทักมาอีกครั้งนะคะ 😊";
+
+export const GEMINI_TIMEOUT_REPLY =
+  "ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงค่ะ รบกวนลองใหม่อีกครั้งนะคะ 😊";
+
+export const GEMINI_MODEL = "gemini-3.5-flash";
+
+export const GEMINI_TEMPERATURE = 1.0;
+
+export const GEMINI_MAX_OUTPUT_TOKENS = 1024;
+
+export const SHEET_CACHE_TTL_MS = 60 * 1000;
+
+export const SHEET_FETCH_TIMEOUT_MS = 2000;
+
+export const GEMINI_TIMEOUT_MS = 7000;
