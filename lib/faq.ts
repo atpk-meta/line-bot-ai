@@ -1,5 +1,8 @@
 import { DEFAULT_REPLY } from "./constants";
 
+const COURSE_MENU_REPLY =
+  "สำหรับรายละเอียดคอร์สเรียนที่มีสอนตอนนี้ สามารถกดดูรายละเอียดได้ที่เมนูด้านล่างเลยค่ะ";
+
 interface FAQRow {
   question: string;
   answer: string;
@@ -145,6 +148,23 @@ export function findDirectFAQAnswer(
     return DEFAULT_REPLY;
   }
 
+  const courseMenuTriggers = [
+    "คอร์สเรียน",
+    "สนใจคอร์สเรียน",
+    "สนใจเรียน",
+    "รายละเอียดคอร์ส",
+    "ดูคอร์ส",
+    "คอร์สมีอะไรบ้าง",
+  ];
+
+  if (
+    courseMenuTriggers.some((trigger) =>
+      normalizedMessage.includes(normalizeThaiText(trigger)),
+    )
+  ) {
+    return COURSE_MENU_REPLY;
+  }
+
   for (const row of rows) {
     const normalizedQuestion = normalizeThaiText(row.question);
     if (
@@ -221,8 +241,7 @@ export function findShortcutAnswer(
     {
       triggers: ["คอร์สเรียน", "มีสอนอะไรบ้าง", "สอนอะไร", "เรียนอะไร"],
       keywords: ["คอร์ส", "สอน", "เนื้อหา", "เรียน"],
-      fallback:
-        "ตอนนี้มีคอร์สเกี่ยวกับ TikTok, Shopee, Lazada, Affiliate, AI และการทำ Content Creator ค่ะ",
+      fallback: COURSE_MENU_REPLY,
     },
     {
       triggers: ["ราคา", "ราคาเท่าไร", "ราคาเท่าไหร่", "ค่าเรียน", "เท่าไร", "เท่าไหร่"],
