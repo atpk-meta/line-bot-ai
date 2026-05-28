@@ -61,6 +61,10 @@ function normalizeThaiText(text: string): string {
   return text
     .replace(/^\uFEFF/, "")
     .toLowerCase()
+    .replace(/ไหร่/g, "ไร")
+    .replace(/เท่าไหร/g, "เท่าไร")
+    .replace(/มั้ย/g, "ไหม")
+    .replace(/ม๊ะ/g, "ไหม")
     .replace(/[\s"'`“”‘’.,!?()[\]{}:;|/\\\-–—_]+/g, "")
     .replace(/ครับ|ค่ะ|คะ|นะ|จ้า|จ๊ะ|หน่อย|รบกวน/g, "");
 }
@@ -70,6 +74,24 @@ function findHeaderIndex(header: string[], names: string[]): number {
   return header.findIndex((cell) =>
     normalizedNames.includes(normalizeThaiText(cell)),
   );
+}
+
+function getSimilarity(a: string, b: string): number {
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length > b.length ? a : b;
+
+  if (!shorter || !longer) {
+    return 0;
+  }
+
+  let matches = 0;
+  for (const char of shorter) {
+    if (longer.includes(char)) {
+      matches += 1;
+    }
+  }
+
+  return matches / longer.length;
 }
 
 function parseFAQRows(csvText: string): FAQRow[] {
@@ -124,7 +146,8 @@ export function findDirectFAQAnswer(
       normalizedQuestion &&
       (normalizedMessage === normalizedQuestion ||
         normalizedMessage.includes(normalizedQuestion) ||
-        normalizedQuestion.includes(normalizedMessage))
+        normalizedQuestion.includes(normalizedMessage) ||
+        getSimilarity(normalizedMessage, normalizedQuestion) >= 0.85)
     ) {
       return row.answer;
     }
