@@ -30,8 +30,9 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - `LINE_CHANNEL_SECRET`
 - `GEMINI_API_KEY`
 - `SHEET_CSV_URL`
+- `KNOWLEDGE_DOC_URL` optional Google Docs URL used after FAQ priority
+- `KNOWLEDGE_TEXT` optional fallback knowledge if `KNOWLEDGE_DOC_URL` is not set or fetch fails
 - `ADMIN_GROUP_ID` optional, for Smart Handoff admin notifications
-- `KNOWLEDGE_TEXT` optional, for extra non-FAQ knowledge used after FAQ priority
 
 ## Non-Negotiables
 

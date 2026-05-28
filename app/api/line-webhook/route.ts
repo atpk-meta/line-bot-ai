@@ -15,6 +15,7 @@ import {
   notifyAdmin,
   shouldHandoff,
 } from "@/lib/handoff";
+import { getKnowledgeText } from "@/lib/knowledge";
 import { log } from "@/lib/log";
 import { getFAQText } from "@/lib/sheet";
 
@@ -32,6 +33,8 @@ export function GET() {
       LINE_CHANNEL_SECRET: Boolean(process.env.LINE_CHANNEL_SECRET),
       GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
       SHEET_CSV_URL: Boolean(process.env.SHEET_CSV_URL),
+      KNOWLEDGE_DOC_URL: Boolean(process.env.KNOWLEDGE_DOC_URL),
+      KNOWLEDGE_TEXT: Boolean(process.env.KNOWLEDGE_TEXT),
       ADMIN_GROUP_ID: Boolean(process.env.ADMIN_GROUP_ID),
     },
   });
@@ -155,7 +158,8 @@ async function handleTextEvent(
     try {
       reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
       if (reply === DEFAULT_REPLY) {
-        reply = await generateReply(userMessage, faqText);
+        const knowledgeText = await getKnowledgeText();
+        reply = await generateReply(userMessage, faqText, knowledgeText);
       } else {
         log.info("faq.direct_match", {
           userHash,

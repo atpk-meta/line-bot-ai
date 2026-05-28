@@ -8,8 +8,9 @@ Production-grade LINE Bot for a/TPK using Next.js 14, LINE Messaging API, Gemini
 - `LINE_CHANNEL_SECRET`
 - `GEMINI_API_KEY`
 - `SHEET_CSV_URL`
+- `KNOWLEDGE_DOC_URL` optional Google Docs URL used after FAQ priority
+- `KNOWLEDGE_TEXT` optional fallback knowledge if `KNOWLEDGE_DOC_URL` is not set or fetch fails
 - `ADMIN_GROUP_ID` optional for Smart Handoff notifications
-- `KNOWLEDGE_TEXT` optional extra knowledge used only when FAQ has no answer
 
 ## Commands
 

@@ -17,7 +17,13 @@ export const GEMINI_MAX_OUTPUT_TOKENS = 1024;
 
 export const SHEET_CACHE_TTL_MS = 60 * 1000;
 
+export const KNOWLEDGE_CACHE_TTL_MS = 60 * 1000;
+
+export const KNOWLEDGE_MAX_CHARS = 20_000;
+
 export const SHEET_FETCH_TIMEOUT_MS = 4000;
+
+export const KNOWLEDGE_FETCH_TIMEOUT_MS = 3000;
 
 export const GEMINI_TIMEOUT_MS = 6500;
 

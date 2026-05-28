@@ -193,6 +193,7 @@ function getUsageNumber(
 export async function generateReply(
   userMessage: string,
   faqText: string,
+  knowledgeText: string,
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -201,7 +202,6 @@ export async function generateReply(
 
   const ai = new GoogleGenAI({ apiKey });
   const startTime = Date.now();
-  const knowledgeText = process.env.KNOWLEDGE_TEXT || "";
   const lastMessages = "";
 
   try {
