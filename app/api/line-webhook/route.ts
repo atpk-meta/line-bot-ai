@@ -121,8 +121,15 @@ async function handleTextEvent(
 
   try {
     if (shouldHandoff(userMessage)) {
-      await notifyAdmin(client, event.source.userId, userMessage);
       await safeReplyText(client, event.replyToken, HANDOFF_REPLY);
+      try {
+        await notifyAdmin(client, event.source.userId, userMessage);
+      } catch (error) {
+        log.error("handoff.notify_failed", {
+          err: error instanceof Error ? error.message : "unknown",
+          userHash,
+        });
+      }
       log.info("handoff.routed", {
         userHash,
         latencyMs: Date.now() - startTime,

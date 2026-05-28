@@ -17,10 +17,10 @@ export const GEMINI_MAX_OUTPUT_TOKENS = 1024;
 
 export const SHEET_CACHE_TTL_MS = 60 * 1000;
 
-export const SHEET_FETCH_TIMEOUT_MS = 2000;
+export const SHEET_FETCH_TIMEOUT_MS = 1500;
 
-export const GEMINI_TIMEOUT_MS = 7000;
+export const GEMINI_TIMEOUT_MS = 5500;
 
-export const LINE_REPLY_RETRY_COUNT = 2;
+export const LINE_REPLY_RETRY_COUNT = 1;
 
 export const LINE_REPLY_RETRY_DELAY_MS = 250;
