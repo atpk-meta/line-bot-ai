@@ -9,6 +9,7 @@ Production-grade LINE Bot for a/TPK using Next.js 14, LINE Messaging API, Gemini
 - `GEMINI_API_KEY`
 - `SHEET_CSV_URL`
 - `ADMIN_GROUP_ID` optional for Smart Handoff notifications
+- `KNOWLEDGE_TEXT` optional extra knowledge used only when FAQ has no answer
 
 ## Commands
 

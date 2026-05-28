@@ -31,6 +31,7 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - `GEMINI_API_KEY`
 - `SHEET_CSV_URL`
 - `ADMIN_GROUP_ID` optional, for Smart Handoff admin notifications
+- `KNOWLEDGE_TEXT` optional, for extra non-FAQ knowledge used after FAQ priority
 
 ## Non-Negotiables
 
