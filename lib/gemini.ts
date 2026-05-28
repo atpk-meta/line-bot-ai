@@ -8,6 +8,7 @@ import {
   GEMINI_TIMEOUT_REPLY,
 } from "./constants";
 import { log } from "./log";
+import { type FAQItem } from "@/types/faq";
 
 function buildPrompt(
   userMessage: string,
@@ -279,4 +280,103 @@ export async function generateReply(
 
     throw error;
   }
+}
+
+function buildFAQExtractionPrompt(messages: string[]): string {
+  return `<task>
+Analyze Facebook Page Inbox customer messages and create FAQ draft items for page a/TPK.
+
+Instructions:
+- identify question intent
+- group similar questions
+- estimate frequency from repeated/similar messages
+- create category
+- generate short FAQ draft
+- DO NOT invent business information
+- if uncertain, use answer "ขออนุญาตเช็กข้อมูลให้ก่อนนะคะ เดี๋ยวน้องแจ้งคุณเอให้ค่ะ"
+- status must always be "pending"
+- source must always be "facebook"
+- output JSON array only, no markdown
+</task>
+
+<output_schema>
+[
+  {
+    "question": "short normalized customer question",
+    "answer": "short Thai FAQ draft, do not invent business facts",
+    "category": "short category",
+    "frequency": 1,
+    "source": "facebook",
+    "status": "pending",
+    "updated_at": "ISO datetime"
+  }
+]
+</output_schema>
+
+<messages>
+${messages.map((message, index) => `${index + 1}. ${message}`).join("\n")}
+</messages>`;
+}
+
+function parseFAQItems(raw: string): FAQItem[] {
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const parsed = JSON.parse(cleaned) as Partial<FAQItem>[];
+  const now = new Date().toISOString();
+
+  return parsed
+    .map((item) => ({
+      question: String(item.question || "").trim(),
+      answer: String(item.answer || DEFAULT_REPLY).trim(),
+      category: String(item.category || "general").trim(),
+      frequency: Math.max(1, Number(item.frequency || 1)),
+      source: "facebook" as const,
+      status: "pending" as const,
+      updated_at: item.updated_at || now,
+    }))
+    .filter((item) => item.question && item.answer);
+}
+
+export async function extractFAQItemsFromMessages(
+  messages: string[],
+): Promise<FAQItem[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY");
+  }
+
+  if (!messages.length) {
+    return [];
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const startTime = Date.now();
+  const response = await withTimeout(
+    ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: buildFAQExtractionPrompt(messages),
+      config: {
+        temperature: GEMINI_TEMPERATURE,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+      },
+    }),
+    GEMINI_TIMEOUT_MS,
+  );
+
+  const usage = response.usageMetadata;
+  const finishReason = response.candidates?.[0]?.finishReason;
+  log.info("gemini.faq_extracted", {
+    messages: messages.length,
+    durationMs: Date.now() - startTime,
+    finishReason,
+    thoughtsTokenCount: getUsageNumber(usage, "thoughtsTokenCount"),
+    candidatesTokenCount: getUsageNumber(usage, "candidatesTokenCount"),
+    totalTokenCount: getUsageNumber(usage, "totalTokenCount"),
+    promptTokenCount: getUsageNumber(usage, "promptTokenCount"),
+  });
+
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error("Gemini FAQ extraction hit MAX_TOKENS");
+  }
+
+  return parseFAQItems(response.text || "");
 }

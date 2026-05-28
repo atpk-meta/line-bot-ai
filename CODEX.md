@@ -36,7 +36,10 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - `ADMIN_LINE_USER_IDS` optional comma-separated LINE admins for `/bot on` and `/bot off`
 - `FACEBOOK_PAGE_ID`
 - `FACEBOOK_PAGE_ACCESS_TOKEN`
+- `FB_PAGE_ID` / `FB_PAGE_ACCESS_TOKEN` aliases for Facebook FAQ sync
 - `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_PRIVATE_KEY`
 - `GOOGLE_SHEET_ID` optional if not parseable from `SHEET_CSV_URL`
 - `SYNC_SECRET` optional for `/api/sync-human-replies-to-faq`
 
@@ -54,6 +57,7 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - Human/admin replies must become FAQ drafts first, normally `status=pending`.
 - When fallback or human handoff is active, check memory before FAQ/Gemini and keep the bot quiet during the pause window.
 - Do not use emoji in customer replies.
+- Facebook Inbox FAQ sync writes pending drafts to the `FAQ` sheet and updates duplicate frequency instead of appending duplicates.
 
 ## Brand Voice
 
