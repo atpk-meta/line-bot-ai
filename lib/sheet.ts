@@ -3,6 +3,7 @@ import { log } from "./log";
 
 let cachedFAQ = "";
 let cachedAt = 0;
+let refreshPromise: Promise<string> | null = null;
 
 function toCsvFetchUrl(url: string): string {
   const spreadsheetMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([^/]+)/);
@@ -32,66 +33,99 @@ function stripUrlsFromSourceText(text: string): string {
     .replace(/pageUrl\s*[:=]\s*[^\s"',)]*/gi, "");
 }
 
-export async function getFAQText(): Promise<string> {
-  const now = Date.now();
-
-  if (cachedFAQ && now - cachedAt < SHEET_CACHE_TTL_MS) {
-    return cachedFAQ;
-  }
-
+async function fetchFAQText(): Promise<string> {
   const csvUrl = process.env.SHEET_CSV_URL;
   if (!csvUrl) {
     log.error("sheet.env_missing");
-    throw new Error("Missing SHEET_CSV_URL");
+    return "";
   }
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SHEET_FETCH_TIMEOUT_MS);
-    let res: Response;
+  const now = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SHEET_FETCH_TIMEOUT_MS);
+  const start = Date.now();
 
-    try {
-      res = await fetch(toCsvFetchUrl(csvUrl), {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+  try {
+    const res = await fetch(toCsvFetchUrl(csvUrl), {
+      cache: "no-store",
+      signal: controller.signal,
+    });
 
     if (!res.ok) {
       log.error("sheet.fetch_bad_status", { status: res.status });
-      throw new Error(`Failed to fetch sheet: ${res.status}`);
+      return "";
     }
 
     const csvText = stripUrlsFromSourceText(await res.text());
-
     if (!csvText.trim()) {
       log.error("sheet.empty");
-      throw new Error("FAQ sheet is empty");
+      return "";
     }
 
     cachedFAQ = csvText;
     cachedAt = now;
 
     log.info("sheet.fetched", {
-      bytes: csvText.length,
+      cacheHit: false,
+      length: csvText.length,
+      durationMs: Date.now() - start,
       ttlMs: SHEET_CACHE_TTL_MS,
     });
 
     return cachedFAQ;
   } catch (error) {
-    if (cachedFAQ) {
-      log.warn("sheet.fetch_failed_using_stale_cache", {
+    log.warn("sheet.fetch_failed", {
+      err: error instanceof Error ? error.message : "unknown",
+      durationMs: Date.now() - start,
+      timeoutMs: SHEET_FETCH_TIMEOUT_MS,
+      hasCache: Boolean(cachedFAQ),
+    });
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function refreshFAQInBackground(): void {
+  if (refreshPromise) {
+    return;
+  }
+
+  refreshPromise = fetchFAQText()
+    .catch((error) => {
+      log.warn("sheet.background_refresh_failed", {
         err: error instanceof Error ? error.message : "unknown",
       });
-      return cachedFAQ;
-    }
-
-    log.error("sheet.fetch_failed_no_cache", {
-      err: error instanceof Error ? error.message : "unknown",
-      timeoutMs: SHEET_FETCH_TIMEOUT_MS,
+      return "";
+    })
+    .finally(() => {
+      refreshPromise = null;
     });
-    throw error;
+}
+
+export async function getFAQText(): Promise<string> {
+  const now = Date.now();
+  const start = Date.now();
+
+  if (cachedFAQ) {
+    const isFresh = now - cachedAt < SHEET_CACHE_TTL_MS;
+    log.info("sheet.cache_returned", {
+      cacheHit: true,
+      fresh: isFresh,
+      length: cachedFAQ.length,
+      durationMs: Date.now() - start,
+    });
+    if (!isFresh) {
+      refreshFAQInBackground();
+    }
+    return cachedFAQ;
   }
+
+  const fetched = await fetchFAQText();
+  log.info("sheet.initial_returned", {
+    cacheHit: false,
+    length: fetched.length,
+    durationMs: Date.now() - start,
+  });
+  return fetched;
 }

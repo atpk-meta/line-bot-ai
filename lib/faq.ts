@@ -160,3 +160,111 @@ export function findDirectFAQAnswer(
 
   return null;
 }
+
+function findAnswerByKeywords(rows: FAQRow[], keywords: string[]): string | null {
+  const normalizedKeywords = keywords.map(normalizeThaiText);
+
+  for (const row of rows) {
+    const haystack = normalizeThaiText(`${row.question} ${row.answer}`);
+    if (normalizedKeywords.some((keyword) => keyword && haystack.includes(keyword))) {
+      return row.answer;
+    }
+  }
+
+  return null;
+}
+
+function findKnowledgeSentence(knowledgeText: string, keywords: string[]): string | null {
+  if (!knowledgeText.trim()) {
+    return null;
+  }
+
+  const normalizedKeywords = keywords.map(normalizeThaiText);
+  const sentences = knowledgeText
+    .split(/\n|(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  for (const sentence of sentences) {
+    const normalizedSentence = normalizeThaiText(sentence);
+    if (
+      normalizedKeywords.some((keyword) =>
+        keyword ? normalizedSentence.includes(keyword) : false,
+      )
+    ) {
+      return sentence.slice(0, 250);
+    }
+  }
+
+  return null;
+}
+
+export function findShortcutAnswer(
+  userMessage: string,
+  csvText: string,
+  knowledgeText = "",
+): string | null {
+  const rows = parseFAQRows(csvText);
+  const normalizedMessage = normalizeThaiText(userMessage);
+
+  if (!normalizedMessage) {
+    return null;
+  }
+
+  const shortcuts: { triggers: string[]; keywords: string[]; fallback?: string }[] = [
+    {
+      triggers: ["สอบถาม", "สนใจเรียน"],
+      keywords: ["คอร์ส", "เรียน", "TikTok", "Shopee", "AI"],
+      fallback:
+        "คุณสนใจสอบถามเรื่องคอร์สเรียน การทำ TikTok หรือการสร้างรายได้ออนไลน์ด้านไหนดีคะ",
+    },
+    {
+      triggers: ["คอร์สเรียน", "มีสอนอะไรบ้าง", "สอนอะไร", "เรียนอะไร"],
+      keywords: ["คอร์ส", "สอน", "เนื้อหา", "เรียน"],
+      fallback:
+        "ตอนนี้มีคอร์สเกี่ยวกับ TikTok, Shopee, Lazada, Affiliate, AI และการทำ Content Creator ค่ะ",
+    },
+    {
+      triggers: ["ราคา", "ราคาเท่าไร", "ราคาเท่าไหร่", "ค่าเรียน", "เท่าไร", "เท่าไหร่"],
+      keywords: ["ราคา", "บาท", "ค่าเรียน"],
+    },
+    {
+      triggers: ["tiktok", "ติ๊กต็อก"],
+      keywords: ["TikTok", "ติ๊กต็อก"],
+    },
+    {
+      triggers: ["shopee", "ช้อปปี้"],
+      keywords: ["Shopee", "ช้อปปี้"],
+    },
+    {
+      triggers: ["ai"],
+      keywords: ["AI", "ChatGPT", "Gemini"],
+    },
+  ];
+
+  for (const shortcut of shortcuts) {
+    const matchedTrigger = shortcut.triggers.some((trigger) =>
+      normalizedMessage.includes(normalizeThaiText(trigger)),
+    );
+
+    if (!matchedTrigger) {
+      continue;
+    }
+
+    const faqAnswer = findAnswerByKeywords(rows, shortcut.keywords);
+    if (faqAnswer) {
+      return faqAnswer;
+    }
+
+    const knowledgeAnswer = findKnowledgeSentence(knowledgeText, shortcut.keywords);
+    if (knowledgeAnswer) {
+      return knowledgeAnswer;
+    }
+
+    if (shortcut.fallback) {
+      return shortcut.fallback;
+    }
+  }
+
+  return null;
+}

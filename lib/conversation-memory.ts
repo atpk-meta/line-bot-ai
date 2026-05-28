@@ -1,6 +1,7 @@
 import {
   DEFAULT_REPLY,
   FALLBACK_HANDOFF_PAUSE_MS,
+  FALLBACK_REPEAT_SUPPRESS_MS,
   HUMAN_ACTIVE_PAUSE_MS,
 } from "./constants";
 
@@ -21,6 +22,7 @@ export interface ConversationMemory {
   };
   lastIntent?: string;
   lastBotAction?: string;
+  lastFallbackAt?: number;
   sentKeywords: string[];
   handoff?: {
     status: "bot_active" | "waiting_for_human" | "human_active";
@@ -171,6 +173,13 @@ export function shouldBotReply(
 ): BotReplyDecision {
   const handoff = memory.handoff;
 
+  if (
+    memory.lastFallbackAt &&
+    now - memory.lastFallbackAt < FALLBACK_REPEAT_SUPPRESS_MS
+  ) {
+    return { shouldBotReply: false, memory };
+  }
+
   if (handoff?.pausedUntil && handoff.pausedUntil > now) {
     if (handoff.status === "human_active") {
       return { shouldBotReply: false, memory };
@@ -227,6 +236,20 @@ export function markFallbackHandoff(
       pausedUntil: Date.now() + FALLBACK_HANDOFF_PAUSE_MS,
       fallbackNoticeSent: true,
     },
+  };
+
+  saveMemory(userId, nextMemory);
+  return nextMemory;
+}
+
+export function markFallbackSent(
+  userId: string | undefined,
+  memory = getMemory(userId),
+): ConversationMemory {
+  const nextMemory: ConversationMemory = {
+    ...memory,
+    lastFallbackAt: Date.now(),
+    lastBotAction: "fallback_response",
   };
 
   saveMemory(userId, nextMemory);

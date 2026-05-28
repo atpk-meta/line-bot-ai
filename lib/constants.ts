@@ -18,17 +18,21 @@ export const GEMINI_TEMPERATURE = 1.0;
 
 export const GEMINI_MAX_OUTPUT_TOKENS = 1024;
 
-export const SHEET_CACHE_TTL_MS = 60 * 1000;
+export const SHEET_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export const KNOWLEDGE_CACHE_TTL_MS = 60 * 1000;
+export const KNOWLEDGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export const KNOWLEDGE_MAX_CHARS = 20_000;
 
-export const SHEET_FETCH_TIMEOUT_MS = 2500;
+export const SHEET_FETCH_TIMEOUT_MS = 1500;
 
 export const KNOWLEDGE_FETCH_TIMEOUT_MS = 1500;
 
-export const GEMINI_TIMEOUT_MS = 5000;
+export const GEMINI_TIMEOUT_MS = 6500;
+
+export const WEBHOOK_TOTAL_TIMEOUT_MS = 9000;
+
+export const FALLBACK_REPEAT_SUPPRESS_MS = 10 * 60 * 1000;
 
 export const LINE_REPLY_RETRY_COUNT = 1;
 

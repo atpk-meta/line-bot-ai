@@ -3,9 +3,12 @@ import { Client, messagingApi, type WebhookEvent } from "@line/bot-sdk";
 import { NextResponse } from "next/server";
 import {
   DEFAULT_REPLY,
+  GEMINI_TIMEOUT_REPLY,
   LINE_REPLY_RETRY_COUNT,
   LINE_REPLY_RETRY_DELAY_MS,
+  SAFE_SYSTEM_BUSY_REPLY,
   SHEET_ERROR_REPLY,
+  WEBHOOK_TOTAL_TIMEOUT_MS,
 } from "@/lib/constants";
 import {
   appendHistory,
@@ -13,13 +16,14 @@ import {
   getMemory,
   getSystemState,
   markFallbackHandoff,
+  markFallbackSent,
   markHumanActive,
   markKeywordResponse,
   setBotActive,
   shouldBotReply,
 } from "@/lib/conversation-memory";
 import { generateReply } from "@/lib/gemini";
-import { findDirectFAQAnswer } from "@/lib/faq";
+import { findDirectFAQAnswer, findShortcutAnswer } from "@/lib/faq";
 import {
   HANDOFF_REPLY,
   maskLineUserId,
@@ -177,6 +181,8 @@ async function handleTextEvent(
   }
 
   const startTime = Date.now();
+  const timerLabel = `webhook-total-${startTime}`;
+  console.time(timerLabel);
   const userId = event.source.userId;
   const userHash = maskLineUserId(userId);
   const userMessage = event.message.text;
@@ -259,6 +265,8 @@ async function handleTextEvent(
     }
 
     let faqText: string;
+    const faqTimerLabel = `faq-${startTime}`;
+    console.time(faqTimerLabel);
     try {
       faqText = await getFAQText();
     } catch (error) {
@@ -269,24 +277,57 @@ async function handleTextEvent(
       });
       await safeReplyText(client, event.replyToken, SHEET_ERROR_REPLY);
       appendHistory(userId, { role: "assistant", text: SHEET_ERROR_REPLY });
+      markFallbackSent(userId);
       return;
+    } finally {
+      console.timeEnd(faqTimerLabel);
     }
 
     let reply = DEFAULT_REPLY;
+    let knowledgeText = "";
     try {
       reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
       if (reply === DEFAULT_REPLY) {
-        const knowledgeText = await getKnowledgeText();
-        memory = getMemory(userId);
-        const lastMessages = formatConversationHistory(memory);
-        const systemState = getSystemState(memory);
-        reply = await generateReply(
-          userMessage,
-          faqText,
-          knowledgeText,
-          lastMessages,
-          systemState,
-        );
+        reply = findShortcutAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
+      }
+
+      if (reply === DEFAULT_REPLY) {
+        const knowledgeTimerLabel = `knowledge-${startTime}`;
+        console.time(knowledgeTimerLabel);
+        try {
+          knowledgeText = await getKnowledgeText();
+        } finally {
+          console.timeEnd(knowledgeTimerLabel);
+        }
+        reply = findShortcutAnswer(userMessage, faqText, knowledgeText) ?? DEFAULT_REPLY;
+      }
+
+      if (reply === DEFAULT_REPLY) {
+        if (Date.now() - startTime > WEBHOOK_TOTAL_TIMEOUT_MS - 7000) {
+          log.warn("webhook.skip_gemini_not_enough_time", {
+            ...getDebugState(userId, eventSource, adminMessage, true, SAFE_SYSTEM_BUSY_REPLY.length),
+            elapsedMs: Date.now() - startTime,
+            fallbackReason: "not_enough_webhook_time",
+          });
+          reply = SAFE_SYSTEM_BUSY_REPLY;
+        } else {
+          const geminiTimerLabel = `gemini-${startTime}`;
+          console.time(geminiTimerLabel);
+          try {
+            memory = getMemory(userId);
+            const lastMessages = formatConversationHistory(memory);
+            const systemState = getSystemState(memory);
+            reply = await generateReply(
+              userMessage,
+              faqText,
+              knowledgeText,
+              lastMessages,
+              systemState,
+            );
+          } finally {
+            console.timeEnd(geminiTimerLabel);
+          }
+        }
       } else {
         markKeywordResponse(userId, userMessage);
         log.info("faq.direct_match", {
@@ -307,6 +348,12 @@ async function handleTextEvent(
     appendHistory(userId, { role: "assistant", text: safeReply });
     if (safeReply === DEFAULT_REPLY) {
       markFallbackHandoff(userId);
+    } else if (
+      safeReply === SAFE_SYSTEM_BUSY_REPLY ||
+      safeReply === GEMINI_TIMEOUT_REPLY ||
+      safeReply === SHEET_ERROR_REPLY
+    ) {
+      markFallbackSent(userId);
     }
     log.info("reply.sent", {
       ...getDebugState(userId, eventSource, adminMessage, true, safeReply.length),
@@ -314,6 +361,9 @@ async function handleTextEvent(
       latencyMs: Date.now() - startTime,
       inputLength: userMessage.length,
       replyLength: safeReply.length,
+      totalDurationMs: Date.now() - startTime,
+      fallbackReason:
+        safeReply === SAFE_SYSTEM_BUSY_REPLY ? "slow_or_sanitized_reply" : undefined,
     });
   } catch (error) {
     log.error("webhook.event_failed", {
@@ -324,6 +374,8 @@ async function handleTextEvent(
     await safeReplyText(client, event.replyToken, DEFAULT_REPLY);
     appendHistory(userId, { role: "assistant", text: DEFAULT_REPLY });
     markFallbackHandoff(userId);
+  } finally {
+    console.timeEnd(timerLabel);
   }
 }
 
