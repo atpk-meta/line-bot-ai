@@ -33,6 +33,11 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - `KNOWLEDGE_DOC_URL` optional Google Docs URL used after FAQ priority
 - `KNOWLEDGE_TEXT` optional fallback knowledge if `KNOWLEDGE_DOC_URL` is not set or fetch fails
 - `ADMIN_GROUP_ID` optional, for Smart Handoff admin notifications
+- `FACEBOOK_PAGE_ID`
+- `FACEBOOK_PAGE_ACCESS_TOKEN`
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_SHEET_ID` optional if not parseable from `SHEET_CSV_URL`
+- `SYNC_SECRET` optional for `/api/sync-human-replies-to-faq`
 
 ## Non-Negotiables
 
@@ -44,6 +49,8 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - Do not cache FAQ longer than 60 seconds.
 - Do not send partial Gemini output when `finishReason === "MAX_TOKENS"`.
 - Do not log full customer message content in normal webhook logs.
+- Do not use `FAQ_DRAFT` rows for customer replies unless `status=approved`.
+- Human/admin replies must become FAQ drafts first, normally `status=pending`.
 
 ## Brand Voice
 

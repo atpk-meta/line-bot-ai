@@ -7,6 +7,10 @@ import {
   LINE_REPLY_RETRY_DELAY_MS,
   SHEET_ERROR_REPLY,
 } from "@/lib/constants";
+import {
+  getConversationHistory,
+  rememberConversationTurn,
+} from "@/lib/conversation-memory";
 import { generateReply } from "@/lib/gemini";
 import { findDirectFAQAnswer } from "@/lib/faq";
 import {
@@ -36,6 +40,8 @@ export function GET() {
       KNOWLEDGE_DOC_URL: Boolean(process.env.KNOWLEDGE_DOC_URL),
       KNOWLEDGE_TEXT: Boolean(process.env.KNOWLEDGE_TEXT),
       ADMIN_GROUP_ID: Boolean(process.env.ADMIN_GROUP_ID),
+      FACEBOOK_PAGE_ID: Boolean(process.env.FACEBOOK_PAGE_ID),
+      GOOGLE_SHEET_ID: Boolean(process.env.GOOGLE_SHEET_ID),
     },
   });
 }
@@ -159,7 +165,13 @@ async function handleTextEvent(
       reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
       if (reply === DEFAULT_REPLY) {
         const knowledgeText = await getKnowledgeText();
-        reply = await generateReply(userMessage, faqText, knowledgeText);
+        const lastMessages = getConversationHistory(event.source.userId);
+        reply = await generateReply(
+          userMessage,
+          faqText,
+          knowledgeText,
+          lastMessages,
+        );
       } else {
         log.info("faq.direct_match", {
           userHash,
@@ -175,6 +187,7 @@ async function handleTextEvent(
     }
 
     await safeReplyText(client, event.replyToken, reply);
+    rememberConversationTurn(event.source.userId, userMessage, reply);
     log.info("reply.sent", {
       userHash,
       latencyMs: Date.now() - startTime,

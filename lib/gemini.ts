@@ -194,6 +194,7 @@ export async function generateReply(
   userMessage: string,
   faqText: string,
   knowledgeText: string,
+  lastMessages = "",
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -202,7 +203,6 @@ export async function generateReply(
 
   const ai = new GoogleGenAI({ apiKey });
   const startTime = Date.now();
-  const lastMessages = "";
 
   try {
     const response = await withTimeout(

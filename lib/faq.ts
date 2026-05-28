@@ -3,6 +3,7 @@ import { DEFAULT_REPLY } from "./constants";
 interface FAQRow {
   question: string;
   answer: string;
+  status?: string;
 }
 
 function parseCsv(csvText: string): string[][] {
@@ -103,11 +104,13 @@ function parseFAQRows(csvText: string): FAQRow[] {
   const header = rows[0];
   let questionIndex = findHeaderIndex(header, ["question", "คำถาม", "q"]);
   let answerIndex = findHeaderIndex(header, ["answer", "คำตอบ", "a"]);
+  let statusIndex = findHeaderIndex(header, ["status", "สถานะ"]);
   let dataRows = rows.slice(1);
 
   if (questionIndex === -1 || answerIndex === -1) {
     questionIndex = 0;
     answerIndex = 1;
+    statusIndex = -1;
     dataRows = rows;
 
     const firstQuestion = normalizeThaiText(rows[0]?.[0] || "");
@@ -125,8 +128,10 @@ function parseFAQRows(csvText: string): FAQRow[] {
     .map((cells) => ({
       question: cells[questionIndex] || "",
       answer: cells[answerIndex] || "",
+      status: statusIndex === -1 ? undefined : cells[statusIndex] || "",
     }))
-    .filter((row) => row.question && row.answer);
+    .filter((row) => row.question && row.answer)
+    .filter((row) => !row.status || normalizeThaiText(row.status) === "approved");
 }
 
 export function findDirectFAQAnswer(

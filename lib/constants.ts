@@ -30,3 +30,7 @@ export const GEMINI_TIMEOUT_MS = 6500;
 export const LINE_REPLY_RETRY_COUNT = 1;
 
 export const LINE_REPLY_RETRY_DELAY_MS = 250;
+
+export const FAQ_DRAFT_SHEET_NAME = "FAQ_DRAFT";
+
+export const HUMAN_REPLY_SYNC_LIMIT = 25;
