@@ -6,8 +6,17 @@ import { log } from "./log";
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const DEFAULT_GOOGLE_SHEET_ID = "1JMLNQPMQ7Br-Q5QkPNKwwJZf-lHq1y43sPpsaQxaVAs";
-const FAQ_SHEET_NAME = "FAQ";
-const FAQ_HEADERS = [
+const DEFAULT_FAQ_SHEET_NAME = "FAQ";
+const THAI_FAQ_HEADERS = [
+  "หมวด",
+  "คำถาม",
+  "คำตอบ",
+  "frequency",
+  "source",
+  "status",
+  "updated_at",
+];
+const ENGLISH_FAQ_HEADERS = [
   "question",
   "answer",
   "category",
@@ -28,6 +37,11 @@ interface ExistingFAQRow {
   frequency: number;
 }
 
+interface FAQSheetTarget {
+  title: string;
+  layout: "thai" | "english";
+}
+
 function base64Url(value: string): string {
   return Buffer.from(value)
     .toString("base64")
@@ -38,6 +52,10 @@ function base64Url(value: string): string {
 
 function getSpreadsheetId(): string {
   return process.env.GOOGLE_SHEET_ID || DEFAULT_GOOGLE_SHEET_ID;
+}
+
+function quoteSheetName(title: string): string {
+  return `'${title.replace(/'/g, "''")}'`;
 }
 
 function normalizePrivateKey(privateKey: string): string {
@@ -148,7 +166,20 @@ function getSimilarity(a: string, b: string): number {
   return matches / longer.length;
 }
 
-async function ensureFAQSheet(): Promise<void> {
+function detectLayout(header: string[] | undefined): "thai" | "english" {
+  const normalized = (header || []).map((cell) => normalizeQuestion(cell));
+  if (
+    normalized.includes(normalizeQuestion("หมวด")) ||
+    normalized.includes(normalizeQuestion("คำถาม")) ||
+    normalized.includes(normalizeQuestion("คำตอบ"))
+  ) {
+    return "thai";
+  }
+
+  return "english";
+}
+
+async function getFAQSheetTarget(): Promise<FAQSheetTarget> {
   const spreadsheetId = getSpreadsheetId();
   const metaRes = await sheetsFetch(`${spreadsheetId}?fields=sheets.properties`);
   if (!metaRes.ok) {
@@ -158,31 +189,77 @@ async function ensureFAQSheet(): Promise<void> {
   const meta = (await metaRes.json()) as {
     sheets?: { properties?: { title?: string } }[];
   };
-  const exists = (meta.sheets || []).some(
-    (sheet) => sheet.properties?.title === FAQ_SHEET_NAME,
-  );
+  const sheetTitles = (meta.sheets || [])
+    .map((sheet) => sheet.properties?.title)
+    .filter((title): title is string => Boolean(title));
+  const explicitSheetName = process.env.GOOGLE_FAQ_SHEET_NAME;
+  const selectedTitle =
+    explicitSheetName ||
+    sheetTitles.find((title) => title === DEFAULT_FAQ_SHEET_NAME) ||
+    sheetTitles[0] ||
+    DEFAULT_FAQ_SHEET_NAME;
 
-  if (!exists) {
-    const addRes = await sheetsFetch(`${spreadsheetId}:batchUpdate`, {
-      method: "POST",
-      body: JSON.stringify({
-        requests: [{ addSheet: { properties: { title: FAQ_SHEET_NAME } } }],
-      }),
-    });
-    if (!addRes.ok) {
-      throw new Error(`Failed to create FAQ sheet: ${addRes.status}`);
-    }
+  if (sheetTitles.includes(selectedTitle)) {
+    const values = await getFAQSheetValues(selectedTitle);
+    return {
+      title: selectedTitle,
+      layout: detectLayout(values[0]),
+    };
   }
 
-  const values = await getFAQSheetValues();
+  const addRes = await sheetsFetch(`${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    body: JSON.stringify({
+      requests: [{ addSheet: { properties: { title: selectedTitle } } }],
+    }),
+  });
+  if (!addRes.ok) {
+    throw new Error(`Failed to create FAQ sheet: ${addRes.status}`);
+  }
+
+  await appendFAQRowsRaw(selectedTitle, [ENGLISH_FAQ_HEADERS]);
+  return {
+    title: selectedTitle,
+    layout: "english",
+  };
+}
+
+async function ensureFAQSheet(): Promise<FAQSheetTarget> {
+  const target = await getFAQSheetTarget();
+  const values = await getFAQSheetValues(target.title);
   if (!values.length) {
-    await appendFAQRowsRaw([FAQ_HEADERS]);
+    await appendFAQRowsRaw(
+      target.title,
+      [target.layout === "thai" ? THAI_FAQ_HEADERS : ENGLISH_FAQ_HEADERS],
+    );
+  } else if (target.layout === "thai" && (values[0] || []).length < 7) {
+    await updateFAQMetadataHeaders(target.title);
+  }
+
+  return target;
+}
+
+async function updateFAQMetadataHeaders(sheetTitle: string): Promise<void> {
+  const spreadsheetId = getSpreadsheetId();
+  const range = encodeURIComponent(`${quoteSheetName(sheetTitle)}!D1:G1`);
+  const res = await sheetsFetch(
+    `${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        values: [["frequency", "source", "status", "updated_at"]],
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to update FAQ metadata headers: ${res.status}`);
   }
 }
 
-async function getFAQSheetValues(): Promise<string[][]> {
+async function getFAQSheetValues(sheetTitle: string): Promise<string[][]> {
   const spreadsheetId = getSpreadsheetId();
-  const range = encodeURIComponent(`${FAQ_SHEET_NAME}!A:G`);
+  const range = encodeURIComponent(`${quoteSheetName(sheetTitle)}!A:G`);
   const res = await sheetsFetch(`${spreadsheetId}/values/${range}`);
   if (res.status === 400) {
     return [];
@@ -195,9 +272,12 @@ async function getFAQSheetValues(): Promise<string[][]> {
   return payload.values || [];
 }
 
-async function appendFAQRowsRaw(values: (string | number)[][]): Promise<void> {
+async function appendFAQRowsRaw(
+  sheetTitle: string,
+  values: (string | number)[][],
+): Promise<void> {
   const spreadsheetId = getSpreadsheetId();
-  const range = encodeURIComponent(`${FAQ_SHEET_NAME}!A:G`);
+  const range = encodeURIComponent(`${quoteSheetName(sheetTitle)}!A:G`);
   const res = await sheetsFetch(
     `${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`,
     {
@@ -212,12 +292,15 @@ async function appendFAQRowsRaw(values: (string | number)[][]): Promise<void> {
 }
 
 async function updateFAQFrequency(
+  sheetTitle: string,
   rowNumber: number,
   frequency: number,
   updatedAt: string,
 ): Promise<void> {
   const spreadsheetId = getSpreadsheetId();
-  const range = encodeURIComponent(`${FAQ_SHEET_NAME}!D${rowNumber}:G${rowNumber}`);
+  const range = encodeURIComponent(
+    `${quoteSheetName(sheetTitle)}!D${rowNumber}:G${rowNumber}`,
+  );
   const res = await sheetsFetch(
     `${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
     {
@@ -233,10 +316,11 @@ async function updateFAQFrequency(
   }
 }
 
-function parseExistingRows(values: string[][]): ExistingFAQRow[] {
+function parseExistingRows(values: string[][], layout: FAQSheetTarget["layout"]): ExistingFAQRow[] {
+  const questionIndex = layout === "thai" ? 1 : 0;
   return values.slice(1).map((row, index) => ({
     rowNumber: index + 2,
-    question: row[0] || "",
+    question: row[questionIndex] || "",
     frequency: Number(row[3] || 0),
   }));
 }
@@ -257,9 +341,9 @@ function findDuplicate(
 }
 
 export async function appendFAQDraftsToSheet(items: FAQItem[]): Promise<FAQWriteStats> {
-  await ensureFAQSheet();
-  const values = await getFAQSheetValues();
-  const existingRows = parseExistingRows(values);
+  const target = await ensureFAQSheet();
+  const values = await getFAQSheetValues(target.title);
+  const existingRows = parseExistingRows(values, target.layout);
   const rowsToAppend: (string | number)[][] = [];
   let updated = 0;
 
@@ -267,21 +351,33 @@ export async function appendFAQDraftsToSheet(items: FAQItem[]): Promise<FAQWrite
     const duplicate = findDuplicate(item, existingRows);
     if (duplicate) {
       const frequency = duplicate.frequency + item.frequency;
-      await updateFAQFrequency(duplicate.rowNumber, frequency, item.updated_at);
+      await updateFAQFrequency(target.title, duplicate.rowNumber, frequency, item.updated_at);
       duplicate.frequency = frequency;
       updated += 1;
       continue;
     }
 
-    rowsToAppend.push([
-      item.question,
-      item.answer,
-      item.category,
-      item.frequency,
-      item.source,
-      item.status,
-      item.updated_at,
-    ]);
+    rowsToAppend.push(
+      target.layout === "thai"
+        ? [
+            item.category,
+            item.question,
+            item.answer,
+            item.frequency,
+            item.source,
+            item.status,
+            item.updated_at,
+          ]
+        : [
+            item.question,
+            item.answer,
+            item.category,
+            item.frequency,
+            item.source,
+            item.status,
+            item.updated_at,
+          ],
+    );
     existingRows.push({
       rowNumber: existingRows.length + 2,
       question: item.question,
@@ -290,10 +386,12 @@ export async function appendFAQDraftsToSheet(items: FAQItem[]): Promise<FAQWrite
   }
 
   if (rowsToAppend.length) {
-    await appendFAQRowsRaw(rowsToAppend);
+    await appendFAQRowsRaw(target.title, rowsToAppend);
   }
 
   log.info("google_sheet.faq_rows_written", {
+    sheetTitle: target.title,
+    layout: target.layout,
     rowsCreated: rowsToAppend.length,
     rowsUpdated: updated,
   });
