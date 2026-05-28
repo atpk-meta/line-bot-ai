@@ -1,12 +1,26 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { Client, messagingApi, type WebhookEvent } from "@line/bot-sdk";
 import { NextResponse } from "next/server";
-import { DEFAULT_REPLY, SHEET_ERROR_REPLY } from "@/lib/constants";
+import {
+  DEFAULT_REPLY,
+  LINE_REPLY_RETRY_COUNT,
+  LINE_REPLY_RETRY_DELAY_MS,
+  SHEET_ERROR_REPLY,
+} from "@/lib/constants";
 import { generateReply } from "@/lib/gemini";
+import {
+  HANDOFF_REPLY,
+  maskLineUserId,
+  notifyAdmin,
+  shouldHandoff,
+} from "@/lib/handoff";
+import { log } from "@/lib/log";
 import { getFAQText } from "@/lib/sheet";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
+
+type ReplyMessage = Parameters<Client["replyMessage"]>[1];
 
 export function GET() {
   return NextResponse.json({
@@ -17,6 +31,7 @@ export function GET() {
       LINE_CHANNEL_SECRET: Boolean(process.env.LINE_CHANNEL_SECRET),
       GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
       SHEET_CSV_URL: Boolean(process.env.SHEET_CSV_URL),
+      ADMIN_GROUP_ID: Boolean(process.env.ADMIN_GROUP_ID),
     },
   });
 }
@@ -50,15 +65,35 @@ function verifyLineSignature(body: string, signature: string | null): boolean {
   return timingSafeEqual(signatureBuffer, digestBuffer);
 }
 
-async function replyText(
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function replyWithRetry(
   client: Client,
   replyToken: string,
-  text: string,
+  message: ReplyMessage,
+  retries = LINE_REPLY_RETRY_COUNT,
 ): Promise<void> {
-  await client.replyMessage(replyToken, {
-    type: "text",
-    text,
-  } satisfies messagingApi.TextMessage);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      await client.replyMessage(replyToken, message);
+      return;
+    } catch (error) {
+      lastError = error;
+      log.warn("line.reply_failed", { attempt });
+
+      if (attempt < retries) {
+        await delay(LINE_REPLY_RETRY_DELAY_MS * (attempt + 1));
+      }
+    }
+  }
+
+  log.error("line.reply_exhausted", {
+    err: lastError instanceof Error ? lastError.message : "unknown",
+  });
 }
 
 async function safeReplyText(
@@ -66,11 +101,10 @@ async function safeReplyText(
   replyToken: string,
   text: string,
 ): Promise<void> {
-  try {
-    await replyText(client, replyToken, text);
-  } catch (error) {
-    console.error("Failed to reply LINE message", error);
-  }
+  await replyWithRetry(client, replyToken, {
+    type: "text",
+    text,
+  } satisfies messagingApi.TextMessage);
 }
 
 async function handleTextEvent(
@@ -81,23 +115,58 @@ async function handleTextEvent(
     return;
   }
 
-  let faqText: string;
-  try {
-    faqText = await getFAQText();
-  } catch (error) {
-    console.error("Failed to load FAQ sheet", error);
-    await safeReplyText(client, event.replyToken, SHEET_ERROR_REPLY);
-    return;
-  }
+  const startTime = Date.now();
+  const userHash = maskLineUserId(event.source.userId);
+  const userMessage = event.message.text;
 
-  let reply = DEFAULT_REPLY;
   try {
-    reply = await generateReply(event.message.text, faqText);
-  } catch (error) {
-    console.error("Failed to generate Gemini reply", error);
-  }
+    if (shouldHandoff(userMessage)) {
+      await notifyAdmin(client, event.source.userId, userMessage);
+      await safeReplyText(client, event.replyToken, HANDOFF_REPLY);
+      log.info("handoff.routed", {
+        userHash,
+        latencyMs: Date.now() - startTime,
+        inputLength: userMessage.length,
+      });
+      return;
+    }
 
-  await safeReplyText(client, event.replyToken, reply);
+    let faqText: string;
+    try {
+      faqText = await getFAQText();
+    } catch (error) {
+      log.error("sheet.load_failed", {
+        err: error instanceof Error ? error.message : "unknown",
+        userHash,
+      });
+      await safeReplyText(client, event.replyToken, SHEET_ERROR_REPLY);
+      return;
+    }
+
+    let reply = DEFAULT_REPLY;
+    try {
+      reply = await generateReply(userMessage, faqText);
+    } catch (error) {
+      log.error("gemini.failed", {
+        err: error instanceof Error ? error.message : "unknown",
+        userHash,
+      });
+    }
+
+    await safeReplyText(client, event.replyToken, reply);
+    log.info("reply.sent", {
+      userHash,
+      latencyMs: Date.now() - startTime,
+      inputLength: userMessage.length,
+      replyLength: reply.length,
+    });
+  } catch (error) {
+    log.error("webhook.event_failed", {
+      err: error instanceof Error ? error.message : "unknown",
+      userHash,
+    });
+    await safeReplyText(client, event.replyToken, DEFAULT_REPLY);
+  }
 }
 
 export async function POST(request: Request) {
@@ -105,13 +174,15 @@ export async function POST(request: Request) {
   try {
     body = await request.text();
   } catch (error) {
-    console.error("Failed to read LINE webhook body", error);
+    log.error("webhook.body_read_failed", {
+      err: error instanceof Error ? error.message : "unknown",
+    });
     return new NextResponse("Bad Request", { status: 400 });
   }
 
   const signature = request.headers.get("x-line-signature");
   if (!verifyLineSignature(body, signature)) {
-    console.error("LINE webhook signature verification failed");
+    log.warn("webhook.invalid_signature");
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
@@ -119,9 +190,11 @@ export async function POST(request: Request) {
   try {
     const parsedBody = JSON.parse(body) as { events?: WebhookEvent[] };
     events = Array.isArray(parsedBody.events) ? parsedBody.events : [];
-    console.log("LINE webhook received", { eventCount: events.length });
+    log.info("webhook.received", { eventCount: events.length });
   } catch (error) {
-    console.error("Failed to parse LINE webhook body", error);
+    log.error("webhook.json_parse_failed", {
+      err: error instanceof Error ? error.message : "unknown",
+    });
     return new NextResponse("Bad Request", { status: 400 });
   }
 
@@ -129,7 +202,9 @@ export async function POST(request: Request) {
   try {
     client = getLineClient();
   } catch (error) {
-    console.error("Failed to create LINE client", error);
+    log.error("line.client_failed", {
+      err: error instanceof Error ? error.message : "unknown",
+    });
     return NextResponse.json({ ok: false });
   }
 

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "rich-menu:install": "powershell -ExecutionPolicy Bypass -File scripts/install-rich-menu.ps1"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",

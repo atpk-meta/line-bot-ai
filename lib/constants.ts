@@ -7,6 +7,8 @@ export const SHEET_ERROR_REPLY =
 export const GEMINI_TIMEOUT_REPLY =
   "ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงค่ะ รบกวนลองใหม่อีกครั้งนะคะ 😊";
 
+export const HANDOFF_REPLY = "ขอแอดมินติดต่อกลับนะคะ 🙏";
+
 export const GEMINI_MODEL = "gemini-3.5-flash";
 
 export const GEMINI_TEMPERATURE = 1.0;
@@ -18,3 +20,7 @@ export const SHEET_CACHE_TTL_MS = 60 * 1000;
 export const SHEET_FETCH_TIMEOUT_MS = 2000;
 
 export const GEMINI_TIMEOUT_MS = 7000;
+
+export const LINE_REPLY_RETRY_COUNT = 2;
+
+export const LINE_REPLY_RETRY_DELAY_MS = 250;
