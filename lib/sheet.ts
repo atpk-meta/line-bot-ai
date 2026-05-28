@@ -4,6 +4,34 @@ import { log } from "./log";
 let cachedFAQ = "";
 let cachedAt = 0;
 
+function toCsvFetchUrl(url: string): string {
+  const spreadsheetMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([^/]+)/);
+  if (!spreadsheetMatch?.[1]) {
+    return url;
+  }
+
+  const gidMatch = url.match(/[?&#]gid=(\d+)/);
+  const sheetId = spreadsheetMatch[1];
+  const gid = gidMatch?.[1] || "0";
+
+  if (url.includes("/pubhtml")) {
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/pub?gid=${gid}&single=true&output=csv`;
+  }
+
+  if (url.includes("/edit")) {
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${gid}`;
+  }
+
+  return url;
+}
+
+function stripUrlsFromSourceText(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s"',)]+/gi, "")
+    .replace(/docs\.google\.com[^\s"',)]*/gi, "")
+    .replace(/pageUrl\s*[:=]\s*[^\s"',)]*/gi, "");
+}
+
 export async function getFAQText(): Promise<string> {
   const now = Date.now();
 
@@ -23,7 +51,7 @@ export async function getFAQText(): Promise<string> {
     let res: Response;
 
     try {
-      res = await fetch(csvUrl, {
+      res = await fetch(toCsvFetchUrl(csvUrl), {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -36,7 +64,7 @@ export async function getFAQText(): Promise<string> {
       throw new Error(`Failed to fetch sheet: ${res.status}`);
     }
 
-    const csvText = await res.text();
+    const csvText = stripUrlsFromSourceText(await res.text());
 
     if (!csvText.trim()) {
       log.error("sheet.empty");

@@ -9,7 +9,19 @@ let cachedKnowledge = "";
 let cachedAt = 0;
 
 function getFallbackKnowledge(): string {
-  return (process.env.KNOWLEDGE_TEXT || "").slice(0, KNOWLEDGE_MAX_CHARS);
+  const fallback = process.env.KNOWLEDGE_TEXT || "";
+  if (containsInternalUrl(fallback)) {
+    log.warn("knowledge.env_fallback_blocked_internal_url");
+    return "";
+  }
+
+  return fallback.slice(0, KNOWLEDGE_MAX_CHARS);
+}
+
+function containsInternalUrl(value: string): boolean {
+  return /docs\.google\.com|spreadsheets|document\/d\/|pubhtml|https?:\/\//i.test(
+    value,
+  );
 }
 
 function toExportTextUrl(url: string): string {
@@ -76,14 +88,19 @@ export async function getKnowledgeText(): Promise<string> {
     }
 
     const text = (await res.text()).trim().slice(0, KNOWLEDGE_MAX_CHARS);
+    if (containsInternalUrl(text)) {
+      throw new Error("Knowledge doc returned internal URL-like content");
+    }
+
     cachedKnowledge = text;
     cachedAt = now;
     logKnowledgeDebug("url", cachedKnowledge);
     return cachedKnowledge;
   } catch (error) {
-    console.error("Knowledge fetch failed, using env fallback", error);
-    const fallback = getFallbackKnowledge();
-    logKnowledgeDebug(getSource(fallback), fallback);
-    return fallback;
+    console.error("Knowledge fetch failed", error);
+    cachedKnowledge = "";
+    cachedAt = 0;
+    logKnowledgeDebug("empty", "");
+    return "";
   }
 }

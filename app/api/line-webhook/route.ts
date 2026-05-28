@@ -28,6 +28,7 @@ import {
 } from "@/lib/handoff";
 import { getKnowledgeText } from "@/lib/knowledge";
 import { log } from "@/lib/log";
+import { sanitizeBotReply } from "@/lib/sanitize";
 import { getFAQText } from "@/lib/sheet";
 
 export const runtime = "nodejs";
@@ -121,9 +122,10 @@ async function safeReplyText(
   replyToken: string,
   text: string,
 ): Promise<void> {
+  const safeText = sanitizeBotReply(text);
   await replyWithRetry(client, replyToken, {
     type: "text",
-    text,
+    text: safeText,
   } satisfies messagingApi.TextMessage);
 }
 
@@ -215,8 +217,9 @@ async function handleTextEvent(
     memory = decision.memory;
 
     if (decision.oneTimeReply) {
-      await safeReplyText(client, event.replyToken, decision.oneTimeReply);
-      appendHistory(userId, { role: "assistant", text: decision.oneTimeReply });
+      const safeReply = sanitizeBotReply(decision.oneTimeReply);
+      await safeReplyText(client, event.replyToken, safeReply);
+      appendHistory(userId, { role: "assistant", text: safeReply });
       log.info("handoff.waiting_confirmation_sent", {
         ...getDebugState(userId, eventSource, adminMessage, false, decision.oneTimeReply.length),
       });
@@ -299,17 +302,18 @@ async function handleTextEvent(
       });
     }
 
-    await safeReplyText(client, event.replyToken, reply);
-    appendHistory(userId, { role: "assistant", text: reply });
-    if (reply === DEFAULT_REPLY) {
+    const safeReply = sanitizeBotReply(reply);
+    await safeReplyText(client, event.replyToken, safeReply);
+    appendHistory(userId, { role: "assistant", text: safeReply });
+    if (safeReply === DEFAULT_REPLY) {
       markFallbackHandoff(userId);
     }
     log.info("reply.sent", {
-      ...getDebugState(userId, eventSource, adminMessage, true, reply.length),
+      ...getDebugState(userId, eventSource, adminMessage, true, safeReply.length),
       userHash,
       latencyMs: Date.now() - startTime,
       inputLength: userMessage.length,
-      replyLength: reply.length,
+      replyLength: safeReply.length,
     });
   } catch (error) {
     log.error("webhook.event_failed", {

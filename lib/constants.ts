@@ -2,10 +2,13 @@ export const DEFAULT_REPLY =
   "ขออนุญาตเช็กข้อมูลให้ก่อนนะคะ เดี๋ยวน้องแจ้งคุณเอให้ค่ะ";
 
 export const SHEET_ERROR_REPLY =
-  "ตอนนี้น้องดึงข้อมูลไม่สำเร็จ รบกวนทักมาอีกครั้งนะคะ";
+  "ขออภัยค่ะ ตอนนี้ระบบตอบช้ากว่าปกตินิดนึง รบกวนลองใหม่อีกครั้งนะคะ";
 
 export const GEMINI_TIMEOUT_REPLY =
-  "ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงค่ะ รบกวนลองใหม่อีกครั้งนะคะ";
+  "ขออภัยค่ะ ตอนนี้ระบบตอบช้ากว่าปกตินิดนึง รบกวนลองใหม่อีกครั้งนะคะ";
+
+export const SAFE_SYSTEM_BUSY_REPLY =
+  "ขออภัยค่ะ ตอนนี้ระบบตอบช้ากว่าปกตินิดนึง รบกวนลองใหม่อีกครั้งนะคะ";
 
 export const HANDOFF_REPLY = "ขอแอดมินติดต่อกลับนะคะ";
 
@@ -21,11 +24,11 @@ export const KNOWLEDGE_CACHE_TTL_MS = 60 * 1000;
 
 export const KNOWLEDGE_MAX_CHARS = 20_000;
 
-export const SHEET_FETCH_TIMEOUT_MS = 4000;
+export const SHEET_FETCH_TIMEOUT_MS = 2500;
 
-export const KNOWLEDGE_FETCH_TIMEOUT_MS = 3000;
+export const KNOWLEDGE_FETCH_TIMEOUT_MS = 1500;
 
-export const GEMINI_TIMEOUT_MS = 6500;
+export const GEMINI_TIMEOUT_MS = 5000;
 
 export const LINE_REPLY_RETRY_COUNT = 1;
 
