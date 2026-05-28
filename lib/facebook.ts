@@ -40,6 +40,34 @@ function getFacebookConfig() {
   return { pageAccessToken, pageId };
 }
 
+export async function sendFacebookMessage(
+  userId: string,
+  text: string,
+): Promise<void> {
+  const pageAccessToken =
+    process.env.FB_PAGE_ACCESS_TOKEN || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (!pageAccessToken) {
+    throw new Error("Missing FB_PAGE_ACCESS_TOKEN");
+  }
+
+  const res = await fetch(
+    `https://graph.facebook.com/v19.0/me/messages?access_token=${pageAccessToken}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: { text },
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Facebook send failed: ${res.status} ${body.slice(0, 200)}`);
+  }
+}
+
 function isPageMessage(message: FacebookMessage, pageId: string): boolean {
   return message.from?.id === pageId;
 }

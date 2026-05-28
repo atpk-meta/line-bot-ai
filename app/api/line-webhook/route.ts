@@ -1,47 +1,16 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { Client, messagingApi, type WebhookEvent } from "@line/bot-sdk";
 import { NextResponse } from "next/server";
-import {
-  DEFAULT_REPLY,
-  GEMINI_TIMEOUT_REPLY,
-  LINE_REPLY_RETRY_COUNT,
-  LINE_REPLY_RETRY_DELAY_MS,
-  SAFE_SYSTEM_BUSY_REPLY,
-  SHEET_ERROR_REPLY,
-  WEBHOOK_TOTAL_TIMEOUT_MS,
-} from "@/lib/constants";
-import {
-  appendHistory,
-  formatConversationHistory,
-  getMemory,
-  getSystemState,
-  markFallbackHandoff,
-  markFallbackSent,
-  markHumanActive,
-  markKeywordResponse,
-  setBotActive,
-  shouldBotReply,
-} from "@/lib/conversation-memory";
-import { generateReply } from "@/lib/gemini";
-import { findDirectFAQAnswer, findShortcutAnswer } from "@/lib/faq";
-import {
-  HANDOFF_REPLY,
-  maskLineUserId,
-  notifyAdmin,
-  shouldHandoff,
-} from "@/lib/handoff";
-import { getKnowledgeText } from "@/lib/knowledge";
+import { LINE_REPLY_RETRY_COUNT, LINE_REPLY_RETRY_DELAY_MS } from "@/lib/constants";
+import { handleIncomingMessage } from "@/lib/chatbot-core";
+import { maskLineUserId, notifyAdmin } from "@/lib/handoff";
 import { log } from "@/lib/log";
 import { sanitizeBotReply } from "@/lib/sanitize";
-import { getFAQText } from "@/lib/sheet";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
 type ReplyMessage = Parameters<Client["replyMessage"]>[1];
-
-const ADMIN_BOT_ON_REPLY = "บอทกลับมาทำงานแล้วค่ะ";
-const ADMIN_BOT_OFF_REPLY = "ปิดบอทชั่วคราวแล้วค่ะ";
 
 export function GET() {
   return NextResponse.json({
@@ -55,7 +24,7 @@ export function GET() {
       KNOWLEDGE_DOC_URL: Boolean(process.env.KNOWLEDGE_DOC_URL),
       KNOWLEDGE_TEXT: Boolean(process.env.KNOWLEDGE_TEXT),
       ADMIN_GROUP_ID: Boolean(process.env.ADMIN_GROUP_ID),
-      FACEBOOK_PAGE_ID: Boolean(process.env.FACEBOOK_PAGE_ID),
+      FB_PAGE_ID: Boolean(process.env.FB_PAGE_ID),
       GOOGLE_SHEET_ID: Boolean(process.env.GOOGLE_SHEET_ID),
     },
   });
@@ -126,10 +95,9 @@ async function safeReplyText(
   replyToken: string,
   text: string,
 ): Promise<void> {
-  const safeText = sanitizeBotReply(text);
   await replyWithRetry(client, replyToken, {
     type: "text",
-    text: safeText,
+    text: sanitizeBotReply(text),
   } satisfies messagingApi.TextMessage);
 }
 
@@ -145,33 +113,6 @@ function isAdminMessage(event: WebhookEvent): boolean {
   return Boolean(userId && getAdminLineUserIds().includes(userId));
 }
 
-function getDebugState(
-  userId: string | undefined,
-  eventSource: string,
-  adminMessage: boolean,
-  shouldReply: boolean,
-  responseLength = 0,
-) {
-  const memory = getMemory(userId);
-  const now = Date.now();
-
-  return {
-    userId: userId ? maskLineUserId(userId) : "unknown",
-    eventSource,
-    isAdminMessage: adminMessage,
-    handoffStatus: memory.handoff?.status || "bot_active",
-    pausedUntil: memory.handoff?.pausedUntil || 0,
-    now,
-    shouldBotReply: shouldReply,
-    handoffReason: memory.handoff?.reason,
-    fallbackNoticeSent: Boolean(memory.handoff?.fallbackNoticeSent),
-    lastIntent: memory.lastIntent,
-    lastBotAction: memory.lastBotAction,
-    sentKeywords: memory.sentKeywords.join(","),
-    responseLength,
-  };
-}
-
 async function handleTextEvent(
   client: Client,
   event: WebhookEvent,
@@ -180,202 +121,29 @@ async function handleTextEvent(
     return;
   }
 
-  const startTime = Date.now();
-  const timerLabel = `webhook-total-${startTime}`;
-  console.time(timerLabel);
   const userId = event.source.userId;
-  const userHash = maskLineUserId(userId);
-  const userMessage = event.message.text;
-  const adminMessage = isAdminMessage(event);
-  const eventSource = event.source.type;
+  const messageText = event.message.text;
+  const result = await handleIncomingMessage({
+    platform: "line",
+    userId: userId || "unknown",
+    messageText,
+    rawEvent: event,
+    isAdminMessage: isAdminMessage(event),
+  });
 
-  try {
-    if (adminMessage) {
-      appendHistory(userId, { role: "admin", text: userMessage });
-
-      if (userMessage.trim().toLowerCase() === "/bot on") {
-        setBotActive(userId);
-        await safeReplyText(client, event.replyToken, ADMIN_BOT_ON_REPLY);
-        log.info("handoff.admin_command_on", {
-          ...getDebugState(userId, eventSource, adminMessage, true, ADMIN_BOT_ON_REPLY.length),
-        });
-        return;
-      }
-
-      if (userMessage.trim().toLowerCase() === "/bot off") {
-        markHumanActive(userId, "admin_command_off");
-        await safeReplyText(client, event.replyToken, ADMIN_BOT_OFF_REPLY);
-        log.info("handoff.admin_command_off", {
-          ...getDebugState(userId, eventSource, adminMessage, false, ADMIN_BOT_OFF_REPLY.length),
-        });
-        return;
-      }
-
-      markHumanActive(userId, "human_replied");
-      log.info("handoff.human_active", {
-        ...getDebugState(userId, eventSource, adminMessage, false),
-      });
-      return;
-    }
-
-    let memory = appendHistory(userId, { role: "user", text: userMessage });
-    const decision = shouldBotReply(userId, memory);
-    memory = decision.memory;
-
-    if (decision.oneTimeReply) {
-      const safeReply = sanitizeBotReply(decision.oneTimeReply);
-      await safeReplyText(client, event.replyToken, safeReply);
-      appendHistory(userId, { role: "assistant", text: safeReply });
-      log.info("handoff.waiting_confirmation_sent", {
-        ...getDebugState(userId, eventSource, adminMessage, false, decision.oneTimeReply.length),
-      });
-      return;
-    }
-
-    if (!decision.shouldBotReply) {
-      log.info("handoff.bot_paused_no_reply", {
-        ...getDebugState(userId, eventSource, adminMessage, false),
-      });
-      return;
-    }
-
-    log.info("handoff.bot_reply_allowed", {
-      ...getDebugState(userId, eventSource, adminMessage, true),
-    });
-
-    if (shouldHandoff(userMessage)) {
-      await safeReplyText(client, event.replyToken, HANDOFF_REPLY);
-      appendHistory(userId, { role: "assistant", text: HANDOFF_REPLY });
-      markFallbackHandoff(userId);
-      try {
-        await notifyAdmin(client, userId, userMessage);
-      } catch (error) {
-        log.error("handoff.notify_failed", {
-          err: error instanceof Error ? error.message : "unknown",
-          userHash,
-        });
-      }
-      log.info("handoff.routed", {
-        ...getDebugState(userId, eventSource, adminMessage, false, HANDOFF_REPLY.length),
-        userHash,
-        latencyMs: Date.now() - startTime,
-        inputLength: userMessage.length,
-      });
-      return;
-    }
-
-    let faqText: string;
-    const faqTimerLabel = `faq-${startTime}`;
-    console.time(faqTimerLabel);
+  if (result.handoffRequested) {
     try {
-      faqText = await getFAQText();
+      await notifyAdmin(client, userId, messageText);
     } catch (error) {
-      log.error("sheet.load_failed", {
-        ...getDebugState(userId, eventSource, adminMessage, true, SHEET_ERROR_REPLY.length),
+      log.error("handoff.notify_failed", {
         err: error instanceof Error ? error.message : "unknown",
-        userHash,
-      });
-      await safeReplyText(client, event.replyToken, SHEET_ERROR_REPLY);
-      appendHistory(userId, { role: "assistant", text: SHEET_ERROR_REPLY });
-      markFallbackSent(userId);
-      return;
-    } finally {
-      console.timeEnd(faqTimerLabel);
-    }
-
-    let reply = DEFAULT_REPLY;
-    let knowledgeText = "";
-    try {
-      reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
-      if (reply === DEFAULT_REPLY) {
-        reply = findShortcutAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
-      }
-
-      if (reply === DEFAULT_REPLY) {
-        const knowledgeTimerLabel = `knowledge-${startTime}`;
-        console.time(knowledgeTimerLabel);
-        try {
-          knowledgeText = await getKnowledgeText();
-        } finally {
-          console.timeEnd(knowledgeTimerLabel);
-        }
-        reply = findShortcutAnswer(userMessage, faqText, knowledgeText) ?? DEFAULT_REPLY;
-      }
-
-      if (reply === DEFAULT_REPLY) {
-        if (Date.now() - startTime > WEBHOOK_TOTAL_TIMEOUT_MS - 7000) {
-          log.warn("webhook.skip_gemini_not_enough_time", {
-            ...getDebugState(userId, eventSource, adminMessage, true, SAFE_SYSTEM_BUSY_REPLY.length),
-            elapsedMs: Date.now() - startTime,
-            fallbackReason: "not_enough_webhook_time",
-          });
-          reply = SAFE_SYSTEM_BUSY_REPLY;
-        } else {
-          const geminiTimerLabel = `gemini-${startTime}`;
-          console.time(geminiTimerLabel);
-          try {
-            memory = getMemory(userId);
-            const lastMessages = formatConversationHistory(memory);
-            const systemState = getSystemState(memory);
-            reply = await generateReply(
-              userMessage,
-              faqText,
-              knowledgeText,
-              lastMessages,
-              systemState,
-            );
-          } finally {
-            console.timeEnd(geminiTimerLabel);
-          }
-        }
-      } else {
-        markKeywordResponse(userId, userMessage);
-        log.info("faq.direct_match", {
-          userHash,
-          inputLength: userMessage.length,
-          replyLength: reply.length,
-        });
-      }
-    } catch (error) {
-      log.error("gemini.failed", {
-        err: error instanceof Error ? error.message : "unknown",
-        userHash,
+        userHash: maskLineUserId(userId),
       });
     }
+  }
 
-    const safeReply = sanitizeBotReply(reply);
-    await safeReplyText(client, event.replyToken, safeReply);
-    appendHistory(userId, { role: "assistant", text: safeReply });
-    if (safeReply === DEFAULT_REPLY) {
-      markFallbackHandoff(userId);
-    } else if (
-      safeReply === SAFE_SYSTEM_BUSY_REPLY ||
-      safeReply === GEMINI_TIMEOUT_REPLY ||
-      safeReply === SHEET_ERROR_REPLY
-    ) {
-      markFallbackSent(userId);
-    }
-    log.info("reply.sent", {
-      ...getDebugState(userId, eventSource, adminMessage, true, safeReply.length),
-      userHash,
-      latencyMs: Date.now() - startTime,
-      inputLength: userMessage.length,
-      replyLength: safeReply.length,
-      totalDurationMs: Date.now() - startTime,
-      fallbackReason:
-        safeReply === SAFE_SYSTEM_BUSY_REPLY ? "slow_or_sanitized_reply" : undefined,
-    });
-  } catch (error) {
-    log.error("webhook.event_failed", {
-      ...getDebugState(userId, eventSource, adminMessage, true, DEFAULT_REPLY.length),
-      err: error instanceof Error ? error.message : "unknown",
-      userHash,
-    });
-    await safeReplyText(client, event.replyToken, DEFAULT_REPLY);
-    appendHistory(userId, { role: "assistant", text: DEFAULT_REPLY });
-    markFallbackHandoff(userId);
-  } finally {
-    console.timeEnd(timerLabel);
+  if (result.shouldReply && result.replyText) {
+    await safeReplyText(client, event.replyToken, result.replyText);
   }
 }
 
