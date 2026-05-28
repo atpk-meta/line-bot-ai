@@ -1,4 +1,4 @@
-# CLAUDE.md - LINE Bot AI Project
+# CODEX.md - LINE Bot AI Project
 
 ## What We're Building
 
