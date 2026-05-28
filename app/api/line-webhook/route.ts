@@ -8,8 +8,15 @@ import {
   SHEET_ERROR_REPLY,
 } from "@/lib/constants";
 import {
-  getConversationHistory,
-  rememberConversationTurn,
+  appendHistory,
+  formatConversationHistory,
+  getMemory,
+  getSystemState,
+  markFallbackHandoff,
+  markHumanActive,
+  markKeywordResponse,
+  setBotActive,
+  shouldBotReply,
 } from "@/lib/conversation-memory";
 import { generateReply } from "@/lib/gemini";
 import { findDirectFAQAnswer } from "@/lib/faq";
@@ -27,6 +34,9 @@ export const runtime = "nodejs";
 export const maxDuration = 10;
 
 type ReplyMessage = Parameters<Client["replyMessage"]>[1];
+
+const ADMIN_BOT_ON_REPLY = "บอทกลับมาทำงานแล้วค่ะ";
+const ADMIN_BOT_OFF_REPLY = "ปิดบอทชั่วคราวแล้วค่ะ";
 
 export function GET() {
   return NextResponse.json({
@@ -117,6 +127,45 @@ async function safeReplyText(
   } satisfies messagingApi.TextMessage);
 }
 
+function getAdminLineUserIds(): string[] {
+  return (process.env.ADMIN_LINE_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function isAdminMessage(event: WebhookEvent): boolean {
+  const userId = event.source?.userId;
+  return Boolean(userId && getAdminLineUserIds().includes(userId));
+}
+
+function getDebugState(
+  userId: string | undefined,
+  eventSource: string,
+  adminMessage: boolean,
+  shouldReply: boolean,
+  responseLength = 0,
+) {
+  const memory = getMemory(userId);
+  const now = Date.now();
+
+  return {
+    userId: userId ? maskLineUserId(userId) : "unknown",
+    eventSource,
+    isAdminMessage: adminMessage,
+    handoffStatus: memory.handoff?.status || "bot_active",
+    pausedUntil: memory.handoff?.pausedUntil || 0,
+    now,
+    shouldBotReply: shouldReply,
+    handoffReason: memory.handoff?.reason,
+    fallbackNoticeSent: Boolean(memory.handoff?.fallbackNoticeSent),
+    lastIntent: memory.lastIntent,
+    lastBotAction: memory.lastBotAction,
+    sentKeywords: memory.sentKeywords.join(","),
+    responseLength,
+  };
+}
+
 async function handleTextEvent(
   client: Client,
   event: WebhookEvent,
@@ -126,14 +175,71 @@ async function handleTextEvent(
   }
 
   const startTime = Date.now();
-  const userHash = maskLineUserId(event.source.userId);
+  const userId = event.source.userId;
+  const userHash = maskLineUserId(userId);
   const userMessage = event.message.text;
+  const adminMessage = isAdminMessage(event);
+  const eventSource = event.source.type;
 
   try {
+    if (adminMessage) {
+      appendHistory(userId, { role: "admin", text: userMessage });
+
+      if (userMessage.trim().toLowerCase() === "/bot on") {
+        setBotActive(userId);
+        await safeReplyText(client, event.replyToken, ADMIN_BOT_ON_REPLY);
+        log.info("handoff.admin_command_on", {
+          ...getDebugState(userId, eventSource, adminMessage, true, ADMIN_BOT_ON_REPLY.length),
+        });
+        return;
+      }
+
+      if (userMessage.trim().toLowerCase() === "/bot off") {
+        markHumanActive(userId, "admin_command_off");
+        await safeReplyText(client, event.replyToken, ADMIN_BOT_OFF_REPLY);
+        log.info("handoff.admin_command_off", {
+          ...getDebugState(userId, eventSource, adminMessage, false, ADMIN_BOT_OFF_REPLY.length),
+        });
+        return;
+      }
+
+      markHumanActive(userId, "human_replied");
+      log.info("handoff.human_active", {
+        ...getDebugState(userId, eventSource, adminMessage, false),
+      });
+      return;
+    }
+
+    let memory = appendHistory(userId, { role: "user", text: userMessage });
+    const decision = shouldBotReply(userId, memory);
+    memory = decision.memory;
+
+    if (decision.oneTimeReply) {
+      await safeReplyText(client, event.replyToken, decision.oneTimeReply);
+      appendHistory(userId, { role: "assistant", text: decision.oneTimeReply });
+      log.info("handoff.waiting_confirmation_sent", {
+        ...getDebugState(userId, eventSource, adminMessage, false, decision.oneTimeReply.length),
+      });
+      return;
+    }
+
+    if (!decision.shouldBotReply) {
+      log.info("handoff.bot_paused_no_reply", {
+        ...getDebugState(userId, eventSource, adminMessage, false),
+      });
+      return;
+    }
+
+    log.info("handoff.bot_reply_allowed", {
+      ...getDebugState(userId, eventSource, adminMessage, true),
+    });
+
     if (shouldHandoff(userMessage)) {
       await safeReplyText(client, event.replyToken, HANDOFF_REPLY);
+      appendHistory(userId, { role: "assistant", text: HANDOFF_REPLY });
+      markFallbackHandoff(userId);
       try {
-        await notifyAdmin(client, event.source.userId, userMessage);
+        await notifyAdmin(client, userId, userMessage);
       } catch (error) {
         log.error("handoff.notify_failed", {
           err: error instanceof Error ? error.message : "unknown",
@@ -141,6 +247,7 @@ async function handleTextEvent(
         });
       }
       log.info("handoff.routed", {
+        ...getDebugState(userId, eventSource, adminMessage, false, HANDOFF_REPLY.length),
         userHash,
         latencyMs: Date.now() - startTime,
         inputLength: userMessage.length,
@@ -153,10 +260,12 @@ async function handleTextEvent(
       faqText = await getFAQText();
     } catch (error) {
       log.error("sheet.load_failed", {
+        ...getDebugState(userId, eventSource, adminMessage, true, SHEET_ERROR_REPLY.length),
         err: error instanceof Error ? error.message : "unknown",
         userHash,
       });
       await safeReplyText(client, event.replyToken, SHEET_ERROR_REPLY);
+      appendHistory(userId, { role: "assistant", text: SHEET_ERROR_REPLY });
       return;
     }
 
@@ -165,14 +274,18 @@ async function handleTextEvent(
       reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
       if (reply === DEFAULT_REPLY) {
         const knowledgeText = await getKnowledgeText();
-        const lastMessages = getConversationHistory(event.source.userId);
+        memory = getMemory(userId);
+        const lastMessages = formatConversationHistory(memory);
+        const systemState = getSystemState(memory);
         reply = await generateReply(
           userMessage,
           faqText,
           knowledgeText,
           lastMessages,
+          systemState,
         );
       } else {
+        markKeywordResponse(userId, userMessage);
         log.info("faq.direct_match", {
           userHash,
           inputLength: userMessage.length,
@@ -187,8 +300,12 @@ async function handleTextEvent(
     }
 
     await safeReplyText(client, event.replyToken, reply);
-    rememberConversationTurn(event.source.userId, userMessage, reply);
+    appendHistory(userId, { role: "assistant", text: reply });
+    if (reply === DEFAULT_REPLY) {
+      markFallbackHandoff(userId);
+    }
     log.info("reply.sent", {
+      ...getDebugState(userId, eventSource, adminMessage, true, reply.length),
       userHash,
       latencyMs: Date.now() - startTime,
       inputLength: userMessage.length,
@@ -196,10 +313,13 @@ async function handleTextEvent(
     });
   } catch (error) {
     log.error("webhook.event_failed", {
+      ...getDebugState(userId, eventSource, adminMessage, true, DEFAULT_REPLY.length),
       err: error instanceof Error ? error.message : "unknown",
       userHash,
     });
     await safeReplyText(client, event.replyToken, DEFAULT_REPLY);
+    appendHistory(userId, { role: "assistant", text: DEFAULT_REPLY });
+    markFallbackHandoff(userId);
   }
 }
 

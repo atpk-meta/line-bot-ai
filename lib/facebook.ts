@@ -3,8 +3,10 @@ import { log } from "./log";
 
 export interface HumanReplyPair {
   conversationId: string;
+  memoryUserId: string;
   customerQuestion: string;
   humanReply: string;
+  humanReplyAt?: number;
 }
 
 interface FacebookMessage {
@@ -76,8 +78,12 @@ export async function fetchHumanReplyPairs(): Promise<HumanReplyPair[]> {
         if (latestCustomerQuestion) {
           pairs.push({
             conversationId: conversation.id,
+            memoryUserId: `facebook:${conversation.id}`,
             customerQuestion: latestCustomerQuestion,
             humanReply: text,
+            humanReplyAt: message.created_time
+              ? new Date(message.created_time).getTime()
+              : Date.now(),
           });
           log.info("human_reply.pair_found", {
             conversationId: conversation.id,

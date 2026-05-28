@@ -6,6 +6,7 @@ import {
   GEMINI_TEMPERATURE,
 } from "./constants";
 import { type HumanReplyPair } from "./facebook";
+import { appendHistory, markHumanActive } from "./conversation-memory";
 import {
   appendFAQDraft,
   ensureFAQDraftSheet,
@@ -184,6 +185,17 @@ export async function createFAQDraftsFromPairs(
   };
 
   for (const pair of pairs) {
+    appendHistory(pair.memoryUserId, {
+      role: "user",
+      text: pair.customerQuestion,
+    });
+    appendHistory(pair.memoryUserId, {
+      role: "admin",
+      text: pair.humanReply,
+      at: pair.humanReplyAt,
+    });
+    markHumanActive(pair.memoryUserId, "human_replied", undefined, pair.humanReplyAt);
+
     const skipReason = shouldSkipHumanReply(pair.humanReply);
     if (skipReason) {
       stats.skipped_private += 1;

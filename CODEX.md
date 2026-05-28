@@ -33,6 +33,7 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - `KNOWLEDGE_DOC_URL` optional Google Docs URL used after FAQ priority
 - `KNOWLEDGE_TEXT` optional fallback knowledge if `KNOWLEDGE_DOC_URL` is not set or fetch fails
 - `ADMIN_GROUP_ID` optional, for Smart Handoff admin notifications
+- `ADMIN_LINE_USER_IDS` optional comma-separated LINE admins for `/bot on` and `/bot off`
 - `FACEBOOK_PAGE_ID`
 - `FACEBOOK_PAGE_ACCESS_TOKEN`
 - `GOOGLE_SERVICE_ACCOUNT_JSON`
@@ -51,6 +52,8 @@ The bot persona is "น้องลี่จิน", the personal assistant for 
 - Do not log full customer message content in normal webhook logs.
 - Do not use `FAQ_DRAFT` rows for customer replies unless `status=approved`.
 - Human/admin replies must become FAQ drafts first, normally `status=pending`.
+- When fallback or human handoff is active, check memory before FAQ/Gemini and keep the bot quiet during the pause window.
+- Do not use emoji in customer replies.
 
 ## Brand Voice
 

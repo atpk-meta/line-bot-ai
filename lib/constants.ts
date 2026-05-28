@@ -1,13 +1,13 @@
 export const DEFAULT_REPLY =
-  "ขออนุญาตเช็กข้อมูลให้ก่อนนะคะ เดี๋ยวน้องแจ้งคุณเอให้ค่ะ 😊";
+  "ขออนุญาตเช็กข้อมูลให้ก่อนนะคะ เดี๋ยวน้องแจ้งคุณเอให้ค่ะ";
 
 export const SHEET_ERROR_REPLY =
-  "ตอนนี้น้องดึงข้อมูลไม่สำเร็จ รบกวนทักมาอีกครั้งนะคะ 😊";
+  "ตอนนี้น้องดึงข้อมูลไม่สำเร็จ รบกวนทักมาอีกครั้งนะคะ";
 
 export const GEMINI_TIMEOUT_REPLY =
-  "ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงค่ะ รบกวนลองใหม่อีกครั้งนะคะ 😊";
+  "ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงค่ะ รบกวนลองใหม่อีกครั้งนะคะ";
 
-export const HANDOFF_REPLY = "ขอแอดมินติดต่อกลับนะคะ 🙏";
+export const HANDOFF_REPLY = "ขอแอดมินติดต่อกลับนะคะ";
 
 export const GEMINI_MODEL = "gemini-3.5-flash";
 
@@ -34,3 +34,7 @@ export const LINE_REPLY_RETRY_DELAY_MS = 250;
 export const FAQ_DRAFT_SHEET_NAME = "FAQ_DRAFT";
 
 export const HUMAN_REPLY_SYNC_LIMIT = 25;
+
+export const FALLBACK_HANDOFF_PAUSE_MS = 3 * 60 * 60 * 1000;
+
+export const HUMAN_ACTIVE_PAUSE_MS = 6 * 60 * 60 * 1000;

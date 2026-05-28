@@ -14,6 +14,7 @@ function buildPrompt(
   faqText: string,
   knowledgeText: string,
   lastMessages: string,
+  systemState: string,
 ): string {
   return `<role>
 คุณคือ “น้องลี่จิน” เลขาส่วนตัว AI ของคุณเอ เจ้าของเพจ a/TPK
@@ -123,6 +124,10 @@ ${DEFAULT_REPLY}
 * ไม่แข็ง
 * ไม่เป็นหุ่นยนต์
 * ไม่ใช้ศัพท์เทคนิคเยอะ
+* ห้ามใช้ emoji
+* ห้ามสวัสดีซ้ำหรือแนะนำตัวซ้ำถ้าเคยมีประวัติแล้ว
+* ห้ามถามซ้ำเรื่องที่ลูกค้าตอบไปแล้ว
+* ถามต่อทีละเรื่องเท่านั้น
 </conversation_style>
 
 <output_format>
@@ -141,6 +146,10 @@ ${faqText}
 <knowledge>
 ${knowledgeText || "ไม่มีข้อมูลเพิ่มเติม"}
 </knowledge>
+
+<system_state>
+${systemState || "ไม่มี state เพิ่มเติม"}
+</system_state>
 
 <conversation_history>
 ${lastMessages || "ไม่มีประวัติก่อนหน้า"}
@@ -195,6 +204,7 @@ export async function generateReply(
   faqText: string,
   knowledgeText: string,
   lastMessages = "",
+  systemState = "",
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -208,7 +218,13 @@ export async function generateReply(
     const response = await withTimeout(
       ai.models.generateContent({
         model: GEMINI_MODEL,
-        contents: buildPrompt(userMessage, faqText, knowledgeText, lastMessages),
+        contents: buildPrompt(
+          userMessage,
+          faqText,
+          knowledgeText,
+          lastMessages,
+          systemState,
+        ),
         config: {
           temperature: GEMINI_TEMPERATURE,
           maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,

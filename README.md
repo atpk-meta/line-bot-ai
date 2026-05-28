@@ -11,6 +11,7 @@ Production-grade LINE Bot for a/TPK using Next.js 14, LINE Messaging API, Gemini
 - `KNOWLEDGE_DOC_URL` optional Google Docs URL used after FAQ priority
 - `KNOWLEDGE_TEXT` optional fallback knowledge if `KNOWLEDGE_DOC_URL` is not set or fetch fails
 - `ADMIN_GROUP_ID` optional for Smart Handoff notifications
+- `ADMIN_LINE_USER_IDS` optional comma-separated LINE user IDs allowed to send `/bot on` and `/bot off`
 - `FACEBOOK_PAGE_ID` required for syncing human replies into FAQ drafts
 - `FACEBOOK_PAGE_ACCESS_TOKEN` required for syncing Facebook conversations
 - `GOOGLE_SERVICE_ACCOUNT_JSON` required to write `FAQ_DRAFT` rows to Google Sheets
@@ -38,6 +39,13 @@ POST https://YOUR_DOMAIN/api/sync-human-replies-to-faq
 ```
 
 The sync endpoint creates `FAQ_DRAFT` rows with `status=pending`. The LINE bot only uses rows with `status=approved` when a status column exists.
+
+Human handoff behavior:
+
+- Bot fallback pauses that user for 3 hours.
+- Human/admin reply pauses that user or Facebook conversation for 6 hours.
+- `/bot on` resumes bot replies for that LINE source.
+- `/bot off` pauses bot replies for that LINE source.
 
 Optional rich menu install after creating `rich-menu.jpg`:
 
