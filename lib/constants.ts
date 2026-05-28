@@ -19,7 +19,7 @@ export const SHEET_CACHE_TTL_MS = 60 * 1000;
 
 export const SHEET_FETCH_TIMEOUT_MS = 4000;
 
-export const GEMINI_TIMEOUT_MS = 4500;
+export const GEMINI_TIMEOUT_MS = 6500;
 
 export const LINE_REPLY_RETRY_COUNT = 1;
 

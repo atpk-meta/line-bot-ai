@@ -8,6 +8,7 @@ import {
   SHEET_ERROR_REPLY,
 } from "@/lib/constants";
 import { generateReply } from "@/lib/gemini";
+import { findDirectFAQAnswer } from "@/lib/faq";
 import {
   HANDOFF_REPLY,
   maskLineUserId,
@@ -152,7 +153,16 @@ async function handleTextEvent(
 
     let reply = DEFAULT_REPLY;
     try {
-      reply = await generateReply(userMessage, faqText);
+      reply = findDirectFAQAnswer(userMessage, faqText) ?? DEFAULT_REPLY;
+      if (reply === DEFAULT_REPLY) {
+        reply = await generateReply(userMessage, faqText);
+      } else {
+        log.info("faq.direct_match", {
+          userHash,
+          inputLength: userMessage.length,
+          replyLength: reply.length,
+        });
+      }
     } catch (error) {
       log.error("gemini.failed", {
         err: error instanceof Error ? error.message : "unknown",
